@@ -569,6 +569,58 @@ server {
 }
 ```
 
+## 8. Shared Design System
+
+```typescript
+// shared/design-system/vite.config.ts
+import { defineConfig } from 'vite'
+import vue from '@vitejs/plugin-vue'
+import federation from '@originjs/vite-plugin-federation'
+
+export default defineConfig({
+  plugins: [
+    vue(),
+    federation({
+      name: 'design-system',
+      filename: 'remoteEntry.js',
+      exposes: {
+        './Button': './src/components/Button.vue',
+        './Input': './src/components/Input.vue',
+        './Modal': './src/components/Modal.vue',
+        './theme': './src/composables/useTheme.ts'
+      },
+      shared: ['vue']
+    })
+  ],
+  build: {
+    target: 'esnext',
+    minify: false,
+    cssCodeSplit: false
+  }
+})
+```
+
+```typescript
+// shell/nuxt.config.ts - เพิ่ม design system remote
+import federation from '@originjs/vite-plugin-federation'
+
+export default defineNuxtConfig({
+  vite: {
+    plugins: [
+      federation({
+        name: 'shell',
+        remotes: {
+          products: 'http://localhost:3001/assets/remoteEntry.js',
+          cart: 'http://localhost:3002/assets/remoteEntry.js',
+          'design-system': 'http://localhost:3003/assets/remoteEntry.js'
+        },
+        shared: ['vue', 'pinia']
+      })
+    ]
+  }
+})
+```
+
 ## สรุป
 
 ในบทนี้เราได้เรียนรู้:
@@ -580,3 +632,4 @@ server {
 5. **Routing** - จัดการ routing ใน micro-frontend
 6. **Error Boundaries** - จัดการเมื่อ micro-app ล้มเหลว
 7. **Deployment** - Docker + Nginx สำหรับ production
+8. **Shared Design System** - แชร์ UI components ข้าม micro-apps

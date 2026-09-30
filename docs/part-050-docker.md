@@ -646,6 +646,98 @@ CLOUDINARY_API_KEY=
 CLOUDINARY_API_SECRET=
 ```
 
+## 9. Docker Health Monitoring
+
+```bash
+# ดู status ของ containers
+docker compose ps
+
+# ดู resource usage
+docker stats
+
+# ดู logs realtime
+docker compose logs -f --tail=100
+
+# เข้าไปใน container
+docker compose exec app sh
+
+# ดู health check status
+docker inspect --format='{{json .State.Health}}' nuxt-app | jq
+```
+
+```yaml
+# docker-compose.monitoring.yml - เพิ่ม monitoring tools
+services:
+  # Prometheus - metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - monitoring
+
+  # Grafana - metrics visualization
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD}
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - monitoring
+
+  # Loki - log aggregation  
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+    networks:
+      - monitoring
+
+volumes:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  monitoring:
+    driver: bridge
+```
+
+## 10. Docker Compose Commands
+
+```bash
+# Start ทุก service
+docker compose up -d
+
+# Rebuild image และ restart
+docker compose up -d --build
+
+# Stop ทุก service (เก็บ volumes)
+docker compose down
+
+# Stop และลบ volumes ด้วย
+docker compose down -v
+
+# Scale specific service
+docker compose up -d --scale app=3
+
+# ดู config ที่ merge แล้ว
+docker compose config
+
+# Run database migration
+docker compose exec app npx prisma migrate deploy
+
+# Seed database
+docker compose exec app npx prisma db seed
+```
+
 ## สรุป
 
 ในบทนี้เราได้เรียนรู้:
@@ -658,3 +750,5 @@ CLOUDINARY_API_SECRET=
 6. **Nginx Reverse Proxy** - SSL, rate limiting, caching
 7. **Docker Networking** - ความปลอดภัยของ network
 8. **Production Setup** - Deploy scripts และ backup
+9. **Health Monitoring** - Prometheus, Grafana, Loki
+10. **Docker Commands** - คำสั่งสำคัญสำหรับ production

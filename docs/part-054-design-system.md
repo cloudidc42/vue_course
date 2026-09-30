@@ -667,6 +667,84 @@ const selectedRadio = ref('a')
 </style>
 ```
 
+## 7. Animation Tokens
+
+```css
+/* assets/css/tokens/animations.css */
+:root {
+  /* Duration */
+  --duration-fast: 100ms;
+  --duration-normal: 200ms;
+  --duration-slow: 300ms;
+  --duration-slower: 500ms;
+
+  /* Easing */
+  --ease-linear: linear;
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Common transitions */
+  --transition-base: all var(--duration-normal) var(--ease-in-out);
+  --transition-colors: color var(--duration-fast) var(--ease-in-out),
+                       background-color var(--duration-fast) var(--ease-in-out),
+                       border-color var(--duration-fast) var(--ease-in-out);
+  --transition-transform: transform var(--duration-normal) var(--ease-out);
+  --transition-opacity: opacity var(--duration-normal) var(--ease-in-out);
+}
+```
+
+## 8. Design Token Documentation Component
+
+```vue
+<!-- components/design-system/TokenDoc.vue -->
+<template>
+  <section class="token-doc">
+    <h2>{{ title }}</h2>
+    <div class="token-grid">
+      <div
+        v-for="token in tokens"
+        :key="token.name"
+        class="token-item"
+      >
+        <!-- Color preview -->
+        <div
+          v-if="type === 'color'"
+          class="color-swatch"
+          :style="{ background: `var(${token.name})` }"
+        />
+        <!-- Spacing preview -->
+        <div
+          v-else-if="type === 'spacing'"
+          class="spacing-swatch"
+          :style="{ width: `var(${token.name})`, height: '16px', background: 'var(--color-primary-500)' }"
+        />
+        <div class="token-info">
+          <code class="token-name">{{ token.name }}</code>
+          <span class="token-value">{{ token.value }}</span>
+          <span v-if="token.description" class="token-desc">{{ token.description }}</span>
+        </div>
+      </div>
+    </div>
+  </section>
+</template>
+
+<script setup lang="ts">
+interface Token {
+  name: string
+  value: string
+  description?: string
+}
+
+defineProps<{
+  title: string
+  tokens: Token[]
+  type: 'color' | 'spacing' | 'typography' | 'other'
+}>()
+</script>
+```
+
 ## สรุป
 
 ในบทนี้เราได้เรียนรู้:
@@ -677,3 +755,5 @@ const selectedRadio = ref('a')
 4. **Dark Mode** - Theming system ด้วย @nuxtjs/color-mode
 5. **Design System Page** - Showcase ทุก components
 6. **CSS Variables** - ใช้ tokens ใน components
+7. **Animation Tokens** - Duration, Easing, Transition tokens
+8. **Token Documentation** - Component สำหรับ document design tokens

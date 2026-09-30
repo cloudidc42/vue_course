@@ -522,6 +522,108 @@ useSchemaOrg([
 </script>
 ```
 
+## 8. Sitemap และ RSS Feed
+
+```typescript
+// server/routes/sitemap.xml.ts
+export default defineEventHandler(async (event) => {
+  setHeader(event, 'Content-Type', 'application/xml')
+  
+  const posts = await queryContent('blog').find()
+  const baseUrl = 'https://myblog.com'
+  
+  const urls = [
+    { loc: '/', lastmod: new Date().toISOString(), changefreq: 'daily', priority: 1.0 },
+    { loc: '/blog', lastmod: new Date().toISOString(), changefreq: 'daily', priority: 0.9 },
+    ...posts.map(post => ({
+      loc: post._path,
+      lastmod: post.date || new Date().toISOString(),
+      changefreq: 'weekly',
+      priority: 0.7
+    }))
+  ]
+  
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  ${urls.map(url => `
+  <url>
+    <loc>${baseUrl}${url.loc}</loc>
+    <lastmod>${url.lastmod}</lastmod>
+    <changefreq>${url.changefreq}</changefreq>
+    <priority>${url.priority}</priority>
+  </url>`).join('')}
+</urlset>`
+})
+```
+
+```typescript
+// server/routes/rss.xml.ts
+export default defineEventHandler(async (event) => {
+  setHeader(event, 'Content-Type', 'application/rss+xml')
+  
+  const posts = await queryContent('blog')
+    .sort({ date: -1 })
+    .limit(20)
+    .find()
+  
+  const baseUrl = 'https://myblog.com'
+  
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>MyBlog</title>
+    <link>${baseUrl}</link>
+    <description>บทความเกี่ยวกับ Vue.js และ Nuxt.js</description>
+    <language>th</language>
+    ${posts.map(post => `
+    <item>
+      <title>${post.title}</title>
+      <link>${baseUrl}${post._path}</link>
+      <description>${post.description || ''}</description>
+      <pubDate>${new Date(post.date).toUTCString()}</pubDate>
+      <guid>${baseUrl}${post._path}</guid>
+    </item>`).join('')}
+  </channel>
+</rss>`
+})
+```
+
+## 9. Open Graph Images แบบ Dynamic
+
+```typescript
+// server/routes/og/[...slug].png.ts
+import { createCanvas, loadImage, registerFont } from 'canvas'
+
+export default defineEventHandler(async (event) => {
+  const slug = getRouterParam(event, 'slug')
+  const post = await queryContent(`/blog/${slug}`).findOne()
+  
+  if (!post) throw createError({ statusCode: 404 })
+  
+  const canvas = createCanvas(1200, 630)
+  const ctx = canvas.getContext('2d')
+  
+  // Background
+  ctx.fillStyle = '#1a1a2e'
+  ctx.fillRect(0, 0, 1200, 630)
+  
+  // Title text
+  ctx.font = 'bold 56px sans-serif'
+  ctx.fillStyle = '#ffffff'
+  ctx.fillText(post.title || '', 80, 280)
+  
+  // Author
+  ctx.font = '32px sans-serif'
+  ctx.fillStyle = '#94a3b8'
+  ctx.fillText(post.author?.name || 'MyBlog', 80, 550)
+  
+  setHeader(event, 'Content-Type', 'image/png')
+  setHeader(event, 'Cache-Control', 'public, max-age=31536000')
+  
+  return canvas.toBuffer('image/png')
+})
+```
+
 ## สรุป
 
 ในบทนี้เราได้เรียนรู้:
@@ -533,3 +635,5 @@ useSchemaOrg([
 5. **Hybrid Rendering** - ผสม SSG, SSR, CSR ตาม route
 6. **Deploy to CDN** - Netlify, GitHub Pages
 7. **Static Blog** - ตัวอย่าง blog ด้วย @nuxt/content
+8. **Sitemap & RSS** - สร้าง sitemap.xml และ rss.xml อัตโนมัติ
+9. **Dynamic OG Images** - สร้าง Open Graph images แบบ dynamic
