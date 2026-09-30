@@ -492,13 +492,151 @@ commonLabels:
   app.kubernetes.io/part-of: nuxt-app
 ```
 
+## Network Policy
+
+```yaml
+# k8s/network-policy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nuxt-app-network-policy
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      app: nuxt-app
+  policyTypes:
+    - Ingress
+    - Egress
+  
+  ingress:
+    # Allow traffic from Ingress controller
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 3000
+  
+  egress:
+    # Allow DNS
+    - ports:
+        - protocol: UDP
+          port: 53
+    
+    # Allow traffic to database
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    
+    # Allow traffic to Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    
+    # Allow external HTTPS (for Stripe, Sentry, etc.)
+    - ports:
+        - protocol: TCP
+          port: 443
+```
+
+## Pod Disruption Budget
+
+```yaml
+# k8s/pdb.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: nuxt-app-pdb
+  namespace: production
+spec:
+  minAvailable: 2  # Always keep at least 2 pods running
+  selector:
+    matchLabels:
+      app: nuxt-app
+```
+
+## Monitoring with Prometheus
+
+```yaml
+# k8s/service-monitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: nuxt-app-monitor
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: nuxt-app
+  namespaceSelector:
+    matchNames:
+      - production
+  endpoints:
+    - port: http
+      path: /api/metrics
+      interval: 30s
+      scrapeTimeout: 10s
+```
+
+## ตัวอย่าง: kubectl Commands ที่ใช้บ่อย
+
+```bash
+# ดู pods ทั้งหมดใน namespace
+kubectl get pods -n production
+
+# ดู logs ของ pod
+kubectl logs -f deployment/nuxt-app -n production
+
+# Exec เข้า pod
+kubectl exec -it pod/nuxt-app-xxx -n production -- /bin/sh
+
+# Scale deployment
+kubectl scale deployment nuxt-app --replicas=5 -n production
+
+# ดู resource usage
+kubectl top pods -n production
+
+# ดู events
+kubectl get events -n production --sort-by='.lastTimestamp'
+
+# Apply configuration
+kubectl apply -k k8s/
+
+# Delete deployment (careful!)
+kubectl delete deployment nuxt-app -n production
+
+# Port forward สำหรับ debug
+kubectl port-forward deployment/nuxt-app 3000:3000 -n production
+
+# ดู horizontal pod autoscaler
+kubectl get hpa -n production
+
+# Describe pod สำหรับ troubleshoot
+kubectl describe pod nuxt-app-xxx -n production
+```
+
 ## สรุป
 
 Kubernetes Deployment ที่ดีต้องมี:
-1. Resource limits เสมอ
+1. Resource limits เสมอ เพื่อป้องกัน resource starvation
 2. Health checks ทั้ง liveness, readiness, startup
-3. Rolling update strategy
-4. HPA สำหรับ auto-scaling
-5. Secrets management ที่ปลอดภัย
-6. Topology spread constraints
-7. Graceful shutdown
+3. Rolling update strategy เพื่อ zero-downtime
+4. HPA สำหรับ auto-scaling ตาม load
+5. Secrets management ที่ปลอดภัย ด้วย External Secrets
+6. Topology spread constraints เพื่อ high availability
+7. Graceful shutdown ก่อน pod termination
+8. Network Policy เพื่อความปลอดภัย
+9. Pod Disruption Budget สำหรับ maintenance
+10. Monitoring ด้วย Prometheus/Grafana

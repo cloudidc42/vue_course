@@ -469,13 +469,126 @@ function normalizePath(path: string): string {
 }
 ```
 
+## Grafana Dashboard Configuration
+
+```json
+{
+  "title": "Nuxt App Dashboard",
+  "panels": [
+    {
+      "title": "Request Rate",
+      "type": "graph",
+      "targets": [{
+        "expr": "sum(rate(http_requests_total[5m])) by (status)"
+      }]
+    },
+    {
+      "title": "Response Time P95",
+      "type": "stat",
+      "targets": [{
+        "expr": "histogram_quantile(0.95, rate(http_request_duration_bucket[5m]))"
+      }]
+    },
+    {
+      "title": "Error Rate",
+      "type": "stat",
+      "targets": [{
+        "expr": "sum(rate(http_requests_total{status=~'5..'}[5m])) / sum(rate(http_requests_total[5m]))"
+      }]
+    }
+  ]
+}
+```
+
+## Alert Rules
+
+```yaml
+# prometheus/alerts.yml
+groups:
+  - name: nuxt-app
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m])) /
+          sum(rate(http_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }}"
+      
+      - alert: HighResponseTime
+        expr: |
+          histogram_quantile(0.95, rate(http_request_duration_bucket[5m])) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P95 response time is high"
+          description: "P95 response time: {{ $value }}s"
+      
+      - alert: PodCrashLooping
+        expr: |
+          rate(kube_pod_container_status_restarts_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Pod is crash looping"
+```
+
+## Client-side Error Tracking
+
+```typescript
+// plugins/error-handler.client.ts
+export default defineNuxtPlugin((nuxtApp) => {
+  const { captureError } = useSentry()
+  
+  // Vue error handler
+  nuxtApp.vueApp.config.errorHandler = (error, instance, info) => {
+    console.error('Vue error:', error)
+    captureError(error as Error, {
+      componentName: instance?.$options.name,
+      info
+    })
+  }
+  
+  // Global unhandled promise rejection
+  window.addEventListener('unhandledrejection', (event) => {
+    console.error('Unhandled rejection:', event.reason)
+    captureError(new Error(String(event.reason)), {
+      type: 'unhandledRejection'
+    })
+  })
+  
+  // Performance monitoring
+  if ('PerformanceObserver' in window) {
+    const observer = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        if (entry.entryType === 'largest-contentful-paint') {
+          console.log('LCP:', entry.startTime)
+        }
+        if (entry.entryType === 'layout-shift' && !(entry as any).hadRecentInput) {
+          console.log('CLS:', (entry as any).value)
+        }
+      }
+    })
+    
+    observer.observe({ entryTypes: ['largest-contentful-paint', 'layout-shift'] })
+  }
+})
+```
+
 ## สรุป
 
 Logging และ Monitoring ที่ดีต้องมี:
-1. Structured logging ด้วย pino
-2. Error tracking ด้วย Sentry
+1. Structured logging ด้วย pino สำหรับ server
+2. Error tracking ด้วย Sentry ทั้ง client และ server
 3. Health checks สำหรับ load balancers
-4. Application metrics
+4. Application metrics ด้วย Prometheus
 5. Request logging ทุก API call
-6. Log aggregation ใน production
-7. Alerting เมื่อเกิดปัญหา
+6. Log aggregation ด้วย ELK Stack
+7. Alerting ด้วย Prometheus Alertmanager
+8. Grafana dashboards สำหรับ visualization
+9. Core Web Vitals monitoring

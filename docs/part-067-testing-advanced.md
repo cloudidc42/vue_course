@@ -536,13 +536,173 @@ export const handlers = [
 ]
 ```
 
+## E2E Tests ด้วย Playwright
+
+```typescript
+// tests/e2e/checkout.spec.ts
+import { test, expect } from '@playwright/test'
+
+test.describe('Checkout Flow', () => {
+  test.beforeEach(async ({ page }) => {
+    // Login before each test
+    await page.goto('/login')
+    await page.fill('[name=email]', 'test@example.com')
+    await page.fill('[name=password]', 'Password123!')
+    await page.click('[type=submit]')
+    await expect(page).toHaveURL('/')
+  })
+  
+  test('complete checkout flow', async ({ page }) => {
+    // Add product to cart
+    await page.goto('/products/vue-js-course')
+    await page.click('[data-testid=add-to-cart]')
+    
+    // Verify cart has item
+    await expect(page.locator('[data-testid=cart-count]')).toContainText('1')
+    
+    // Go to checkout
+    await page.click('[data-testid=checkout-button]')
+    await expect(page).toHaveURL('/checkout')
+    
+    // Fill shipping address
+    await page.fill('[name=firstName]', 'สมชาย')
+    await page.fill('[name=lastName]', 'ใจดี')
+    await page.fill('[name=addressLine1]', '123 ถนนสุขุมวิท')
+    await page.fill('[name=city]', 'กรุงเทพมหานคร')
+    await page.selectOption('[name=province]', 'Bangkok')
+    await page.fill('[name=postalCode]', '10110')
+    await page.fill('[name=phone]', '0812345678')
+    
+    await page.click('[data-testid=continue-to-payment]')
+    
+    // Fill payment (Stripe test card)
+    const stripeFrame = page.frameLocator('[name^=__privateStripeFrame]')
+    await stripeFrame.locator('[name=cardnumber]').fill('4242424242424242')
+    await stripeFrame.locator('[name=exp-date]').fill('12/28')
+    await stripeFrame.locator('[name=cvc]').fill('123')
+    
+    await page.click('[data-testid=pay-button]')
+    
+    // Verify order confirmation
+    await expect(page).toHaveURL(/\/orders\/\w+/)
+    await expect(page.locator('h1')).toContainText('คำสั่งซื้อสำเร็จ')
+  })
+  
+  test('shows validation errors', async ({ page }) => {
+    await page.goto('/checkout')
+    await page.click('[data-testid=continue-to-payment]')
+    
+    await expect(page.locator('[role=alert]')).toBeVisible()
+    await expect(page.locator('[id=firstName-error]')).toBeVisible()
+  })
+})
+```
+
+```typescript
+// playwright.config.ts
+import { defineConfig, devices } from '@playwright/test'
+
+export default defineConfig({
+  testDir: './tests/e2e',
+  
+  // Maximum time one test can run
+  timeout: 30 * 1000,
+  
+  expect: {
+    timeout: 5000
+  },
+  
+  fullyParallel: true,
+  forbidOnly: !!process.env.CI,
+  retries: process.env.CI ? 2 : 0,
+  workers: process.env.CI ? 1 : undefined,
+  
+  reporter: [
+    ['html', { open: 'never' }],
+    ['junit', { outputFile: 'test-results/junit.xml' }]
+  ],
+  
+  use: {
+    baseURL: process.env.BASE_URL || 'http://localhost:3000',
+    trace: 'on-first-retry',
+    screenshot: 'only-on-failure',
+    video: 'on-first-retry'
+  },
+  
+  projects: [
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] }
+    },
+    {
+      name: 'Mobile Chrome',
+      use: { ...devices['Pixel 5'] }
+    },
+    {
+      name: 'Mobile Safari',
+      use: { ...devices['iPhone 12'] }
+    }
+  ],
+  
+  webServer: {
+    command: 'npm run preview',
+    port: 3000,
+    reuseExistingServer: !process.env.CI
+  }
+})
+```
+
+## Continuous Testing
+
+```yaml
+# .github/workflows/test.yml
+name: Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - run: npm run test:unit -- --coverage
+      - uses: codecov/codecov-action@v3
+        with:
+          file: coverage/lcov.info
+
+  e2e-tests:
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v3
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+```
+
 ## สรุป
 
 Advanced Testing Strategies ต้องมี:
 1. Testing pyramid: Unit > Integration > E2E
 2. Component tests ด้วย Vue Test Utils
 3. API tests ด้วย MSW mocking
-4. Visual regression ด้วย Playwright
-5. Performance testing
+4. Visual regression ด้วย Playwright screenshots
+5. E2E tests ด้วย Playwright สำหรับ critical flows
 6. Load testing ด้วย k6
-7. Coverage thresholds
+7. Coverage thresholds ขั้นต่ำ 80%
+8. CI/CD pipeline รัน tests อัตโนมัติ

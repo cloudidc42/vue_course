@@ -517,12 +517,69 @@ export default defineEventHandler(async (event) => {
 })
 ```
 
+## Cache Warming
+
+```typescript
+// scripts/warm-cache.ts
+// Run after deployment to pre-populate cache
+async function warmCache() {
+  console.log('Warming cache...')
+  
+  const baseUrl = process.env.APP_URL || 'http://localhost:3000'
+  
+  const pagesToWarm = [
+    '/api/products/featured',
+    '/api/categories',
+    '/api/products?limit=12',
+    '/api/blog/latest'
+  ]
+  
+  await Promise.allSettled(
+    pagesToWarm.map(path =>
+      $fetch(`${baseUrl}${path}`)
+        .then(() => console.log(`✓ ${path}`))
+        .catch(err => console.error(`✗ ${path}: ${err.message}`))
+    )
+  )
+  
+  console.log('Cache warming complete!')
+}
+
+warmCache()
+```
+
+## useNuxtData สำหรับ Client-side Caching
+
+```typescript
+// composables/useProducts.ts
+export function useProductsList(page = 1) {
+  // useAsyncData caches by key - shares between server and client
+  const { data, pending, refresh } = useAsyncData(
+    `products-page-${page}`,
+    () => $fetch(`/api/products?page=${page}`),
+    {
+      // Keep stale data while revalidating
+      lazy: false,
+      
+      // Cache on server side
+      getCachedData(key) {
+        return nuxtApp.payload.data[key] || nuxtApp.static.data[key]
+      }
+    }
+  )
+  
+  return { products: data, loading: pending, refresh }
+}
+```
+
 ## สรุป
 
 Caching Strategy ที่ดีต้องมี:
-1. เลือก cache ที่เหมาะกับข้อมูล
-2. กำหนด TTL ที่เหมาะสม
+1. เลือก cache layer ที่เหมาะกับข้อมูล (Browser, CDN, Redis, Route)
+2. กำหนด TTL ที่เหมาะสมกับความถี่ในการเปลี่ยนแปลงข้อมูล
 3. Cache invalidation เมื่อข้อมูลเปลี่ยน
-4. Monitor cache hit rate
+4. Monitor cache hit rate ด้วย Redis INFO stats
 5. Graceful degradation เมื่อ cache ล้มเหลว
-6. SWR สำหรับ UX ที่ดี
+6. SWR pattern สำหรับ UX ที่ดี
+7. Cache warming หลัง deployment
+8. ETag และ conditional requests สำหรับ HTTP caching

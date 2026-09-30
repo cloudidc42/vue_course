@@ -493,6 +493,159 @@ export default defineEventHandler(async (event) => {
 })
 ```
 
+## 8. SQL Injection Prevention
+
+```typescript
+// ❌ ไม่ดี: สร้าง SQL string โดยตรง (อันตราย!)
+const users = await db.query(`SELECT * FROM users WHERE email = '${email}'`)
+
+// ✅ ดี: ใช้ Prisma (parameterized queries อัตโนมัติ)
+const user = await prisma.user.findUnique({ where: { email } })
+
+// ✅ ดี: ถ้าต้องใช้ raw query ใช้ parameterized
+const users = await prisma.$queryRaw`
+  SELECT * FROM users 
+  WHERE email = ${email}
+  AND status = ${'active'}
+`
+```
+
+## 9. Environment Variables Security
+
+```typescript
+// server/utils/config.ts
+export const getRequiredEnv = (key: string): string => {
+  const value = process.env[key]
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${key}`)
+  }
+  return value
+}
+
+// ตรวจสอบตอน startup
+export const validateConfig = () => {
+  const required = [
+    'DATABASE_URL',
+    'NUXT_SESSION_PASSWORD',
+    'CLOUDINARY_API_SECRET'
+  ]
+  
+  const missing = required.filter(key => !process.env[key])
+  
+  if (missing.length > 0) {
+    console.error('Missing required environment variables:', missing)
+    process.exit(1)
+  }
+}
+```
+
+## 10. File Upload Security
+
+```typescript
+// server/api/upload/secure.post.ts
+const ALLOWED_MIME_TYPES = new Set([
+  'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+  'application/pdf'
+])
+
+const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
+
+export default defineEventHandler(async (event) => {
+  const user = await requireAuth(event)
+  
+  const formData = await readMultipartFormData(event)
+  if (!formData) throw createError({ statusCode: 400, message: 'No file provided' })
+  
+  for (const field of formData) {
+    if (!field.filename) continue
+    
+    // ตรวจสอบ MIME type
+    if (!ALLOWED_MIME_TYPES.has(field.type || '')) {
+      throw createError({
+        statusCode: 400,
+        message: `File type ${field.type} not allowed`
+      })
+    }
+    
+    // ตรวจสอบขนาด
+    if (field.data.length > MAX_FILE_SIZE) {
+      throw createError({ statusCode: 400, message: 'File too large' })
+    }
+    
+    // Sanitize filename - ลบ path traversal
+    const safeName = field.filename
+      .replace(/[^a-zA-Z0-9._-]/g, '_')
+      .replace(/\.\./g, '')
+      .substring(0, 100)
+    
+    // ตรวจสอบ magic bytes (ไม่เชื่อ MIME type จาก client เพียงอย่างเดียว)
+    const isValidImage = await validateFileMagicBytes(field.data, field.type || '')
+    if (!isValidImage) {
+      throw createError({ statusCode: 400, message: 'Invalid file content' })
+    }
+  }
+  
+  return { success: true }
+})
+
+const FILE_SIGNATURES: Record<string, number[][]> = {
+  'image/jpeg': [[0xFF, 0xD8, 0xFF]],
+  'image/png': [[0x89, 0x50, 0x4E, 0x47]],
+  'image/gif': [[0x47, 0x49, 0x46, 0x38]],
+  'image/webp': [[0x52, 0x49, 0x46, 0x46]],
+  'application/pdf': [[0x25, 0x50, 0x44, 0x46]]
+}
+
+const validateFileMagicBytes = (data: Buffer, mimeType: string): boolean => {
+  const signatures = FILE_SIGNATURES[mimeType]
+  if (!signatures) return false
+  
+  return signatures.some(sig =>
+    sig.every((byte, i) => data[i] === byte)
+  )
+}
+```
+
+## 11. Audit Logging
+
+```typescript
+// server/utils/audit.ts
+export type AuditAction =
+  | 'USER_LOGIN'
+  | 'USER_LOGOUT'
+  | 'USER_CREATED'
+  | 'USER_DELETED'
+  | 'POST_PUBLISHED'
+  | 'POST_DELETED'
+  | 'ROLE_CHANGED'
+  | 'PASSWORD_CHANGED'
+  | 'FAILED_LOGIN'
+
+export const createAuditLog = async (
+  action: AuditAction,
+  userId: string | null,
+  details: Record<string, any>,
+  event: any
+) => {
+  const ip = getHeader(event, 'x-forwarded-for') ||
+             event.node.req.socket.remoteAddress || 'unknown'
+  
+  await prisma.auditLog.create({
+    data: {
+      action,
+      userId,
+      details: JSON.stringify(details),
+      ipAddress: ip,
+      userAgent: getHeader(event, 'user-agent') || '',
+      createdAt: new Date()
+    }
+  })
+}
+
+// ใช้ใน login handler
+await createAuditLog('USER_LOGIN', user.id, { email: user.email }, event)
+```
+
 ## สรุป
 
 ในบทนี้เราได้เรียนรู้:
@@ -505,3 +658,7 @@ export default defineEventHandler(async (event) => {
 6. **Input Sanitization** - ตรวจสอบและทำความสะอาด input
 7. **Security Headers** - HTTP headers ที่ช่วยเพิ่มความปลอดภัย
 8. **Secure API Endpoints** - ตัวอย่าง login ที่ปลอดภัย
+9. **SQL Injection Prevention** - ใช้ Prisma parameterized queries
+10. **Environment Variables** - จัดการ secrets อย่างปลอดภัย
+11. **File Upload Security** - ตรวจสอบ file content ด้วย magic bytes
+12. **Audit Logging** - บันทึกการกระทำสำคัญเพื่อ forensics

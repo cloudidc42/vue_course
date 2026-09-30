@@ -381,13 +381,239 @@ USER node
 CMD ["node", "server/index.mjs"]
 ```
 
+## Database Connection Pooling
+
+```typescript
+// server/db.ts
+import { PrismaClient } from '@prisma/client'
+
+const globalForPrisma = globalThis as unknown as {
+  prisma: PrismaClient | undefined
+}
+
+export const prisma = globalForPrisma.prisma ?? new PrismaClient({
+  log: process.env.NODE_ENV === 'development'
+    ? ['query', 'error', 'warn']
+    : ['error'],
+  
+  datasources: {
+    db: {
+      url: process.env.DATABASE_URL
+    }
+  }
+})
+
+if (process.env.NODE_ENV !== 'production') {
+  globalForPrisma.prisma = prisma
+}
+
+// Connection pool configuration (in DATABASE_URL):
+// postgresql://user:pass@host:5432/db?connection_limit=10&pool_timeout=20
+```
+
+## Process Manager Configuration
+
+```json
+// ecosystem.config.js
+module.exports = {
+  apps: [{
+    name: 'nuxt-app',
+    script: '.output/server/index.mjs',
+    instances: 'max',   // Use all CPU cores
+    exec_mode: 'cluster',
+    
+    env_production: {
+      NODE_ENV: 'production',
+      PORT: 3000
+    },
+    
+    // Auto-restart settings
+    watch: false,
+    max_memory_restart: '512M',
+    
+    // Logging
+    log_file: '/var/log/nuxt-app/combined.log',
+    out_file: '/var/log/nuxt-app/out.log',
+    error_file: '/var/log/nuxt-app/error.log',
+    merge_logs: true,
+    log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+    
+    // Graceful shutdown
+    kill_timeout: 30000,
+    
+    // Restart policy
+    autorestart: true,
+    restart_delay: 5000,
+    max_restarts: 10,
+    min_uptime: '10s'
+  }]
+}
+```
+
+## Nginx Reverse Proxy Configuration
+
+```nginx
+# /etc/nginx/conf.d/nuxt-app.conf
+upstream nuxt_app {
+    least_conn;
+    server 127.0.0.1:3000 weight=1 max_fails=3 fail_timeout=30s;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    server_name myapp.com www.myapp.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name myapp.com www.myapp.com;
+    
+    # SSL configuration
+    ssl_certificate /etc/letsencrypt/live/myapp.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/myapp.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+    
+    # HSTS
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+    
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    
+    # Gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_proxied expired no-cache no-store private auth;
+    gzip_types text/plain text/css text/xml text/javascript
+               application/javascript application/xml+rss application/json;
+    
+    # Static assets - long cache
+    location /_nuxt/ {
+        proxy_pass http://nuxt_app;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        proxy_cache_valid 200 1y;
+    }
+    
+    # API - no cache
+    location /api/ {
+        proxy_pass http://nuxt_app;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # Timeout settings
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+        
+        # Rate limiting
+        limit_req zone=api_limit burst=20 nodelay;
+        limit_req_status 429;
+    }
+    
+    # Main app
+    location / {
+        proxy_pass http://nuxt_app;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+# Rate limiting zones
+limit_req_zone $binary_remote_addr zone=api_limit:10m rate=30r/m;
+```
+
+## Database Migration Strategy
+
+```bash
+# scripts/migrate.sh
+#!/bin/bash
+set -e
+
+echo "Running database migrations..."
+
+# Run Prisma migrations
+npx prisma migrate deploy
+
+echo "Migrations completed successfully"
+
+# Seed initial data if needed
+if [ "$RUN_SEED" = "true" ]; then
+  npx prisma db seed
+fi
+```
+
+```typescript
+// prisma/seed.ts
+import { PrismaClient } from '@prisma/client'
+
+const prisma = new PrismaClient()
+
+async function main() {
+  // Create admin user
+  const admin = await prisma.user.upsert({
+    where: { email: process.env.ADMIN_EMAIL! },
+    update: {},
+    create: {
+      email: process.env.ADMIN_EMAIL!,
+      name: 'Admin',
+      password: await bcrypt.hash(process.env.ADMIN_PASSWORD!, 12),
+      role: 'admin',
+      isActive: true
+    }
+  })
+  
+  console.log('Admin user created:', admin.email)
+  
+  // Create default categories
+  const categories = ['Programming', 'Design', 'Business', 'Marketing']
+  
+  for (const name of categories) {
+    await prisma.category.upsert({
+      where: { slug: name.toLowerCase() },
+      update: {},
+      create: {
+        name,
+        slug: name.toLowerCase()
+      }
+    })
+  }
+  
+  console.log('Categories created')
+}
+
+main()
+  .catch(console.error)
+  .finally(() => prisma.$disconnect())
+```
+
 ## สรุป
 
 Production Architecture ที่ดีต้องมี:
 1. Environment configuration แยกชัดเจน
 2. Secret management ที่ปลอดภัย
 3. Zero-downtime deployment
-4. Health checks
-5. Graceful shutdown
-6. Security headers
-7. Performance optimizations
+4. Health checks ทั้ง liveness และ readiness
+5. Graceful shutdown ก่อน process exit
+6. Security headers ผ่าน Nginx/Nuxt Security
+7. Performance optimizations (gzip, caching)
+8. Database connection pooling
+9. Nginx reverse proxy configuration
+10. Database migration strategy

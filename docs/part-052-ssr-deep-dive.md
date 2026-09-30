@@ -415,6 +415,255 @@ export default defineCachedEventHandler(
 )
 ```
 
+## 8. Nuxt Payload และ State Transfer
+
+```typescript
+// การส่ง state จาก server ไป client
+// server/api/initial-data.ts
+export default defineEventHandler(async (event) => {
+  const user = await getUserSession(event)
+  
+  return {
+    user: user?.user || null,
+    config: {
+      features: ['feature-a', 'feature-b'],
+      version: '1.0.0'
+    },
+    timestamp: new Date().toISOString()
+  }
+})
+```
+
+```typescript
+// composables/useInitialData.ts
+// ข้อมูลจาก server จะถูก serialize ใน __NUXT_DATA__ และส่งไป client
+// ไม่ต้อง fetch ซ้ำอีกครั้งที่ client
+
+export const useInitialData = () => {
+  return useAsyncData('initial-data', () => $fetch('/api/initial-data'), {
+    // ข้อมูลนี้จะถูก cache และไม่ refetch ที่ client
+    server: true,
+    lazy: false,
+    getCachedData: (key, nuxtApp) => nuxtApp.payload.data[key]
+  })
+}
+```
+
+## 9. Server Components (Experimental)
+
+```vue
+<!-- components/ServerUserCard.server.vue -->
+<!-- .server.vue จะ render เฉพาะที่ server เท่านั้น -->
+<template>
+  <div class="server-user-card">
+    <img :src="user.avatar" :alt="user.name" />
+    <div>
+      <h3>{{ user.name }}</h3>
+      <p>{{ user.email }}</p>
+      <span class="role">{{ user.role }}</span>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+// โค้ดนี้รันที่ server เท่านั้น ไม่ส่งไปยัง client bundle
+const props = defineProps<{ userId: string }>()
+
+// สามารถ access database โดยตรง โดยไม่ผ่าน API
+const user = await prisma.user.findUnique({
+  where: { id: props.userId },
+  select: { name: true, email: true, avatar: true, role: true }
+})
+</script>
+```
+
+## 10. SSR Caching Strategies
+
+```typescript
+// server/api/products/index.ts - Layered caching
+import { createStorage } from 'unstorage'
+import memoryDriver from 'unstorage/drivers/memory'
+import redisDriver from 'unstorage/drivers/redis'
+
+// สร้าง cache storage
+const cache = createStorage({
+  driver: process.env.REDIS_URL
+    ? redisDriver({ url: process.env.REDIS_URL })
+    : memoryDriver()
+})
+
+export default defineEventHandler(async (event) => {
+  const query = getQuery(event)
+  const cacheKey = `products:${JSON.stringify(query)}`
+  
+  // ตรวจสอบ cache ก่อน
+  const cached = await cache.getItem(cacheKey)
+  if (cached) {
+    setResponseHeader(event, 'X-Cache', 'HIT')
+    return cached
+  }
+  
+  // ดึงข้อมูลจาก database
+  const products = await prisma.product.findMany({
+    where: buildWhereClause(query),
+    take: Number(query.limit) || 20,
+    skip: ((Number(query.page) || 1) - 1) * (Number(query.limit) || 20)
+  })
+  
+  // บันทึกใน cache 5 นาที
+  await cache.setItem(cacheKey, products, { ttl: 300 })
+  
+  setResponseHeader(event, 'X-Cache', 'MISS')
+  return products
+})
+
+function buildWhereClause(query: any) {
+  return {
+    ...(query.category && { categoryId: query.category }),
+    ...(query.search && {
+      name: { contains: String(query.search), mode: 'insensitive' }
+    }),
+    active: true
+  }
+}
+```
+
+## 11. Error Handling ใน SSR
+
+```typescript
+// middleware/error-handler.ts
+export default defineNuxtRouteMiddleware((to) => {
+  // จัดการ route-level errors
+})
+
+// error.vue - Global error page
+```
+
+```vue
+<!-- error.vue -->
+<template>
+  <div class="error-page">
+    <div class="error-content">
+      <h1 class="error-code">{{ error.statusCode }}</h1>
+      <h2 class="error-title">{{ errorTitle }}</h2>
+      <p class="error-message">{{ error.message }}</p>
+      
+      <div class="error-actions">
+        <button @click="handleRetry" class="btn-retry">
+          ลองใหม่
+        </button>
+        <NuxtLink to="/" class="btn-home">
+          กลับหน้าหลัก
+        </NuxtLink>
+      </div>
+      
+      <!-- Debug info (development only) -->
+      <details v-if="isDev" class="error-details">
+        <summary>รายละเอียดข้อผิดพลาด (Development)</summary>
+        <pre>{{ JSON.stringify(error, null, 2) }}</pre>
+      </details>
+    </div>
+  </div>
+</template>
+
+<script setup>
+const props = defineProps<{
+  error: { statusCode: number; message: string; stack?: string }
+}>()
+
+const isDev = process.env.NODE_ENV === 'development'
+
+const errorTitle = computed(() => {
+  const titles: Record<number, string> = {
+    400: 'คำขอไม่ถูกต้อง',
+    401: 'ยังไม่ได้เข้าสู่ระบบ',
+    403: 'ไม่มีสิทธิ์เข้าถึง',
+    404: 'ไม่พบหน้าที่ต้องการ',
+    429: 'คำขอมากเกินไป',
+    500: 'เกิดข้อผิดพลาดที่ Server',
+    503: 'บริการชั่วคราวไม่พร้อมใช้งาน'
+  }
+  return titles[props.error.statusCode] || 'เกิดข้อผิดพลาด'
+})
+
+const handleRetry = () => {
+  clearError({ redirect: useRoute().path })
+}
+</script>
+
+<style scoped>
+.error-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.error-content {
+  text-align: center;
+  max-width: 500px;
+}
+
+.error-code {
+  font-size: 6rem;
+  font-weight: 900;
+  color: #e0e0e0;
+  line-height: 1;
+  margin: 0;
+}
+
+.error-title {
+  font-size: 1.5rem;
+  margin: 8px 0;
+}
+
+.error-message {
+  color: #666;
+  margin-bottom: 32px;
+}
+
+.error-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.btn-retry, .btn-home {
+  padding: 10px 24px;
+  border-radius: 8px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.btn-retry {
+  background: #2196F3;
+  color: white;
+  border: none;
+}
+
+.btn-home {
+  background: white;
+  color: #333;
+  border: 1px solid #ddd;
+}
+
+.error-details {
+  margin-top: 32px;
+  text-align: left;
+}
+
+.error-details pre {
+  background: #f5f5f5;
+  padding: 12px;
+  border-radius: 8px;
+  overflow: auto;
+  font-size: 0.8em;
+}
+</style>
+```
+
 ## สรุป
 
 ในบทนี้เราได้เรียนรู้:
@@ -426,3 +675,7 @@ export default defineCachedEventHandler(
 5. **Streaming SSR** - ส่ง HTML เป็น chunks
 6. **Edge SSR** - render ที่ Edge network
 7. **Performance Demo** - วัดและแสดง SSR metrics
+8. **Nuxt Payload** - State transfer จาก server ไป client
+9. **Server Components** - Render เฉพาะที่ server
+10. **SSR Caching** - Layered caching strategies
+11. **Error Handling** - จัดการ errors ใน SSR อย่างถูกต้อง

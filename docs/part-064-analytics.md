@@ -453,12 +453,77 @@ const handleClick = () => {
 </script>
 ```
 
+## Cookie Consent
+
+```vue
+<!-- components/CookieConsent.vue -->
+<template>
+  <Transition name="slide-up">
+    <div v-if="showBanner" class="cookie-consent">
+      <div class="cookie-content">
+        <p>
+          เราใช้ cookies เพื่อปรับปรุงประสบการณ์การใช้งาน
+          <NuxtLink to="/privacy-policy">นโยบายความเป็นส่วนตัว</NuxtLink>
+        </p>
+        <div class="cookie-actions">
+          <button @click="acceptAll" class="btn-accept">ยอมรับทั้งหมด</button>
+          <button @click="acceptNecessary" class="btn-necessary">เฉพาะที่จำเป็น</button>
+          <button @click="showSettings = true" class="btn-settings">ตั้งค่า</button>
+        </div>
+      </div>
+    </div>
+  </Transition>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted } from 'vue'
+
+const showBanner = ref(false)
+const showSettings = ref(false)
+const CONSENT_KEY = 'cookie_consent'
+
+onMounted(() => {
+  try {
+    const saved = localStorage.getItem(CONSENT_KEY)
+    if (!saved) showBanner.value = true
+  } catch {}
+})
+
+const acceptAll = () => {
+  const consent = { analytics: true, marketing: true, necessary: true }
+  try {
+    localStorage.setItem(CONSENT_KEY, JSON.stringify(consent))
+  } catch {}
+  showBanner.value = false
+  initAnalytics()
+}
+
+const acceptNecessary = () => {
+  const consent = { analytics: false, marketing: false, necessary: true }
+  try {
+    localStorage.setItem(CONSENT_KEY, JSON.stringify(consent))
+  } catch {}
+  showBanner.value = false
+}
+
+const initAnalytics = () => {
+  if (window.gtag) {
+    window.gtag('consent', 'update', {
+      analytics_storage: 'granted',
+      ad_storage: 'granted'
+    })
+  }
+}
+</script>
+```
+
 ## สรุป
 
 Analytics Integration ต้องคำนึงถึง:
-1. Privacy compliance (PDPA, GDPR)
-2. Cookie consent ก่อน tracking
-3. Multiple provider support
-4. E-commerce tracking สำหรับ conversion
-5. Custom events ที่มีความหมาย
+1. Privacy compliance (PDPA, GDPR) - ขอ consent ก่อน
+2. Cookie consent ก่อน tracking ทุกครั้ง
+3. Multiple provider support ด้วย unified composable
+4. E-commerce tracking สำหรับ conversion measurement
+5. Custom events ที่มีความหมายต่อ business
 6. Privacy-first alternatives (Plausible, Umami)
+7. Server-side analytics เพื่อหลีกเลี่ยง ad blockers
